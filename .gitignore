@@ -1,0 +1,6 @@
+# NAKS working data (requests, answers, cli usage) — never commit the demo's
+.naks/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/

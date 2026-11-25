@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# naks-dev — run any command with its Anthropic/OpenAI SDK calls routed through NAKS. No code changes.
+#
+#   cd your-project
+#   naks-dev npm run dev
+#   NAKS_MODE=cli naks-dev python3 generate.py
+#
+# Starts the local endpoint (naks serve), points the Anthropic and OpenAI SDKs at it, and stops it
+# when the command exits. Default mode is chat; change it with NAKS_MODE.
+set -euo pipefail
+
+if [ $# -eq 0 ]; then
+  echo "Usage: naks-dev <command> [args]   e.g. naks-dev npm run dev" >&2
+  exit 2
+fi
+
+NAKS_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PORT="${NAKS_PORT:-4141}"
+export NAKS_MODE="${NAKS_MODE:-chat}"
+
+if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+  echo "[naks] naks serve is already running on port ${PORT}; reusing it." >&2
+else
+  NAKS_PORT="$PORT" python3 "$NAKS_HOME/python/naks_serve.py" &
+  NAKS_PID=$!
+  trap 'kill "$NAKS_PID" 2>/dev/null || true' EXIT
+  for _ in $(seq 1 50); do
+    curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+fi
+
+# The SDKs read these automatically. A real API key (for record/api modes) stays with naks serve;
+# your project only sees a dummy key.
+export ANTHROPIC_BASE_URL="http://127.0.0.1:${PORT}"
+export OPENAI_BASE_URL="http://127.0.0.1:${PORT}/v1"
+export ANTHROPIC_API_KEY="naks"
+export OPENAI_API_KEY="naks"
+
+"$@"
