@@ -1,6 +1,6 @@
 ---
 name: naksify
-description: Connects an existing project to NAKS. Recommends the zero-change naks-dev route when possible, otherwise creates a copy whose AI API calls go through NAKS's ask(). Use with /naksify project-name or /naksify github repo-name.
+description: Connects an existing project to NAKS: suggests the zero-change naks-dev route, or makes a copy whose AI calls go through NAKS. Use with /naksify project-name or /naksify github repo-name.
 ---
 
 # /naksify — connect an existing project to NAKS
@@ -10,7 +10,7 @@ Goal: make a project's AI calls (Anthropic, OpenAI and similar providers) work w
 > Template: set these to your own values before adding this skill to Claude.
 >
 > - `PROJECTS = ~/Projects` (your projects folder)
-> - `NAKS_HOME = ~/naks` (your NAKS clone)
+> - `NAKS_HOME = ~/Projects/naks` (your NAKS clone)
 > - `GITHUB_OWNER = your-github-username`
 
 ## 0. Where to work

@@ -1,43 +1,73 @@
 # NAKS — No API Key System
 
-**Build and iterate on AI features using your Claude subscription instead of paying for API tokens.**
+**Develop AI features on your Claude subscription instead of paying for API tokens.**
 
-When you're prototyping something that calls an LLM, most of the calls are throwaway: you tweak a prompt, rerun the script, fix a bug, rerun again. Paying per token for all of that adds up, even though you already pay for a Claude plan. NAKS sits between your code and the model API during development. It answers your app's AI calls from your subscription, caches every answer so the same question is never asked twice, and gets out of the way in production.
+[Türkçe](README.tr.md) · [Setup guide](INSTALL.md)
+
+## The problem
+
+When you build something that calls an LLM, most of the calls during development are throwaway. You tweak a prompt and rerun, fix a parsing bug and rerun, rerun again to check the UI. Every one of those calls costs API tokens, even though you probably already pay for a Claude plan that you use every day.
+
+## What NAKS does
+
+NAKS sits between your code and the model API **while you develop**:
+
+1. Your code asks a question, either through its normal Anthropic/OpenAI SDK or through NAKS's tiny `ask()` function.
+2. If NAKS has answered that exact question before, the answer comes straight from a local file. No model is called.
+3. If not, the question is answered from **your Claude subscription**, in one of two ways you choose:
+   - **Chat mode (default):** the question is saved to a file. When you're ready, you type `/naks` in a Claude chat, and Claude answers every waiting question at once and writes the answers back.
+   - **CLI mode:** the question is answered on the spot by Claude Code (`claude -p`) on your machine, up to a daily limit you set.
+4. Every answer is saved, so rerunning your code costs nothing.
+
+In production you flip one setting (`NAKS_MODE=api`), and the same code calls the real API with your API key, as normal.
 
 ```
-your code ──ask() / SDK──▶ NAKS ──▶ cached?  ── yes ──▶ answer
+your code ──ask() / SDK──▶ NAKS ──▶ answered before? ── yes ──▶ answer from disk
                                      │ no
                     ┌────────────────┼──────────────────┬───────────────┐
                     ▼                ▼                  ▼               ▼
                   chat              cli              record           api
            queue it; answer    `claude -p`,     real API once,    real API,
-           with /naks in a     right away        then cached      no cache
+           with /naks in a     right away        then saved       no cache
            Claude chat         (daily cap)                       (production)
                     └────────────────┴──────────────────┘
                                      ▼
                          .naks/responses/<id>.json
 ```
 
-[Türkçe README](README.tr.md)
+**Good for:** prototypes, prompt iteration, generating test data and fixtures, scripts and pipelines you rerun often, side projects.
+**Not for:** production traffic, serving other users, real-time chat UIs (in chat mode answers arrive when you run `/naks`), or multi-step agents that call tools in a loop.
 
-## Highlights
+> **Note on "OpenAI-compatible":** NAKS accepts requests in OpenAI's API format so that projects written with the OpenAI SDK work without changes. Those requests are still answered by **Claude**, not by GPT models.
 
-- **Zero code changes for SDK projects.** `naks-dev npm run dev` starts a local endpoint that speaks the Anthropic (`/v1/messages`) and OpenAI (`/v1/chat/completions`) APIs and points the official SDKs at it.
-- **Two ways to answer from your subscription.** Queue requests and answer a whole batch in one go from a Claude chat (`/naks`). Or answer small requests instantly through Claude Code (`claude -p`), behind a daily cap.
-- **Content-addressed cache.** Every request gets an id from a SHA-256 hash of its content. Answers are plain JSON files, so you can read them, diff them and commit them as fixtures.
-- **One switch to production.** `NAKS_MODE=api` calls the real API with your key, with no cache in the way. `record` and `replay` modes cover fixtures and CI.
-- **Zero dependencies.** Single-file Python (3.9+) and JavaScript (Node 18+) clients. Python and JS share the same cache.
+## What you need
+
+| | Needed for |
+|---|---|
+| A Claude plan (Pro, Max, …) | Everything: answers come from your subscription |
+| Python 3.9+ | Everything (NAKS itself has no other dependencies) |
+| [Claude desktop app](https://claude.ai/download) with your projects folder added, plus the `/naks` skill | Chat mode: Claude reads the waiting questions from your disk |
+| [Claude Code](https://code.claude.com/docs/en/setup), logged in with your Claude account | CLI mode |
+| Node 18+ | Only if you use the JavaScript client |
+| An API key | Only for `record` and `api` modes |
+
+The [setup guide](INSTALL.md) walks through all of it step by step.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/genceumut/naks ~/naks
-export PATH="$HOME/naks/bin:$PATH"        # add to your shell profile
+git clone https://github.com/genceumut/naks ~/Projects/naks
+export PATH="$HOME/Projects/naks/bin:$PATH"   # optional: lets you type `naks-dev` anywhere
+python3 ~/Projects/naks/examples/demo.py       # prints "2 request(s) queued"
 ```
+
+Then say `/naks naks` in a Claude chat, run the demo again, and the answers appear. This needs the `/naks` skill and the Claude desktop app with your projects folder added, which the [setup guide](INSTALL.md) covers. Or skip the chat and answer through Claude Code: `NAKS_MODE=cli python3 -c "import sys; sys.path.insert(0, '$HOME/Projects/naks/python'); from naks_client import ask; print(ask('Say hello in 3 words'))"`.
+
+## Connect a project
 
 ### Option 1: no code changes (`naks-dev`)
 
-If your project uses the official Anthropic or OpenAI SDK, prefix your usual command:
+If your project uses the official **Anthropic** or **OpenAI** SDK, put `naks-dev` in front of the command you already use:
 
 ```bash
 cd your-project
@@ -45,16 +75,16 @@ naks-dev npm run dev                         # chat mode: answer with /naks
 NAKS_MODE=cli naks-dev python3 generate.py   # cli mode: answered right away by claude -p
 ```
 
-`naks-dev` starts `naks serve` on `127.0.0.1:4141`. It sets `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and dummy API keys for your command, and stops the server when the command exits. Your code believes it is talking to the real API.
+`naks-dev` starts a small local server (`naks serve`, port 4141) that speaks the Anthropic and OpenAI APIs. It points your SDK at that server through `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`, with a dummy API key, and stops the server when your command exits. Your code doesn't know the difference.
 
-The endpoint supports text, streaming, base64 images and PDFs, JSON schema output (`response_format` / `output_format`) and structured output through a single tool. Multi-tool agent loops, embeddings and audio are not supported.
+The server supports normal requests, streaming, images and PDFs, JSON-schema output and structured output through a single tool.
 
-### Option 2: call NAKS directly (`ask()`)
+### Option 2: call NAKS from code (`ask()`)
 
-Copy one file into your project. There are no other dependencies.
+For new code, or projects that don't use an official SDK, copy one file into your project. It has no dependencies.
 
 ```python
-from naks_client import ask, NaksPending
+from naks_client import ask   # python/naks_client.py
 
 title = ask("Suggest a 5-word title for this note:\n" + note, task="note-title")
 tags = ask("Extract 2-4 tags.", inputs={"note": note},
@@ -63,69 +93,90 @@ summary = ask("Summarize this slide in one sentence.", files=["slides/p3.png"], 
 ```
 
 ```js
-import { ask } from "./naks-client.mjs";   // types: naks-client.d.mts
+import { ask } from "./naks-client.mjs";   // js/naks-client.mjs (+ naks-client.d.mts types)
 const tags = await ask("Extract 2-4 tags.", { inputs: { note }, schema: { type: "array", items: { type: "string" } }, task: "tags" });
 ```
 
-In chat mode the loop works like this:
-1. Run your code. Unanswered requests are written to `.naks/requests/` and `NaksPending` is raised.
-2. In a Claude chat, say `/naks` (see [Claude skills](#claude-skills)). Claude answers every pending request.
-3. Run your code again. Answers now come from disk.
+In chat mode, an unanswered `ask()` raises `NaksPending` with a message telling you to run `/naks`. Run your code, say `/naks`, run it again. Changing the prompt, system prompt, inputs, schema or an attached file makes a new question. Anything unchanged is never asked twice.
 
-Changing the prompt, system message, inputs, schema or an attached file changes the id, so the new request gets asked. If nothing changes, the request is never asked again.
+### Option 3: let Claude do it (`/naksify`)
+
+With the `/naksify` skill installed, say `/naksify my-project` in Claude. It checks whether Option 1 is enough and gives you the command. If it isn't, it makes a converted copy under `naks-at-your-service/my-project/` and leaves the original untouched.
 
 ## Modes
 
-Set with `NAKS_MODE`. Every mode except `api` checks the cache first.
+Set with the `NAKS_MODE` environment variable. Every mode except `api` looks for a saved answer first.
 
-| Mode | On a cache miss | Use it for |
+| Mode | When there's no saved answer | Use it for |
 |---|---|---|
-| `chat` (default) | Writes the request and raises `NaksPending` (or holds the HTTP request open). You answer with `/naks` in Claude. | Batches, requests with images, anything you want to look at |
-| `cli` | Answers right away with `claude -p` from your subscription | Small, one-off requests while developing |
-| `record` | Calls the real API and saves the answer | Capturing real model output as fixtures, paying once |
-| `replay` | Raises `NaksMissing` and never asks anything new | Tests and CI |
+| `chat` (default) | Saves the question and waits for `/naks` | Batches, questions with images, anything you want to look at |
+| `cli` | Answers right away with `claude -p` | Small one-off questions while you work |
+| `record` | Calls the real API once and saves the answer | Capturing real model output as fixtures |
+| `replay` | Fails with `NaksMissing` and never asks anything new | Tests and CI |
 | `api` | Calls the real API directly, without the cache | Production |
 
-### `cli` mode safeguards
+### Safeguards in `cli` mode
 
-`claude -p` runs with every tool disabled, in an empty temporary directory, with no MCP servers and no saved session, so it can only produce text. `ANTHROPIC_API_KEY` is removed from its environment so it can never fall back to billing your API account.
+- **Text only.** `claude -p` runs with all tools disabled, in an empty temporary folder, with no MCP servers and no saved session.
+- **No API billing.** `ANTHROPIC_API_KEY` is removed from its environment, so Claude Code can't quietly bill your API account instead of using your plan.
+- **Daily cap.** At most `NAKS_CLI_DAILY_LIMIT` calls per day (default 20). Every call is logged to `.naks/cli-log.jsonl`.
+- **Fallback to chat mode** when the cap is reached, the question has attachments, Claude Code isn't installed, or a call fails twice.
 
-Calls are capped per day by `NAKS_CLI_DAILY_LIMIT` (default 20), and every call is logged to `.naks/cli-log.jsonl`. A request falls back to `chat` when:
-- the daily cap is reached
-- the request has attachments
-- `claude` isn't installed
-- the call fails twice or returns output that doesn't match the schema
-
-### Environment variables
+### Settings
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `NAKS_MODE` | `chat` | See above |
-| `NAKS_DIR` | nearest parent with `.git`/`.naks`, + `/.naks` | Where requests and answers live |
-| `NAKS_WAIT` | `0` | Seconds `ask()` polls for an answer in chat mode |
+| `NAKS_DIR` | `.naks` in the project root (the nearest folder with `.git` or `.naks`) | Where questions and answers are stored |
+| `NAKS_WAIT` | `0` | Seconds `ask()` waits for an answer in chat mode before raising `NaksPending` |
 | `NAKS_MODEL` | `claude-sonnet-5-5` | Model for `api` / `record` |
 | `NAKS_CLI_DAILY_LIMIT` | `20` | Max `claude -p` calls per day |
 | `NAKS_CLI_TIMEOUT` | `180` | Seconds per `claude -p` call |
-| `NAKS_CLI_MODEL` | Claude Code default | Model for `cli` |
-| `NAKS_PORT` | `4141` | Port for `naks serve` |
-| `NAKS_SERVE_WAIT` | `540` | Seconds `naks serve` holds a request open in chat mode. Shorter than the default SDK timeouts. When it runs out, the endpoint answers HTTP 424, which SDKs don't auto-retry. |
-
-Suggested `.gitignore` entries for projects using NAKS: `.naks/cli-usage.json`, `.naks/cli-log.jsonl`, `.naks/*.tmp`. Ignore `.naks/requests/` too if your prompts contain anything you don't want in git.
+| `NAKS_CLI_MODEL` | Claude Code's default | Model for `cli` |
+| `NAKS_PORT` | `4141` | Port for `naks serve` / `naks-dev` |
+| `NAKS_SERVE_WAIT` | `540` | Seconds the server keeps a request open in chat mode. After that it replies HTTP 424, which SDKs don't auto-retry. |
 
 ## Claude skills
 
-NAKS ships two [Claude skills](https://docs.claude.com) as templates in [`skill/`](skill/). Add them to Claude as skills and adjust the paths and GitHub owner to your setup.
+Two skills live in [`skill/`](skill/). The [setup guide](INSTALL.md#4-install-the-claude-skills) shows how to add them to Claude.
 
-- **`/naks`** finds pending requests in your projects folder (through the Claude desktop app's folder access) or in a GitHub repo, answers them as a plain model call would, and writes the answer files.
-- **`/naksify <project>`** looks at an existing project. If `naks-dev` is enough, it just tells you the command. Otherwise it creates a copy under `naks-at-your-service/<project>/` and rewrites the AI calls in the copy to use `ask()`. The original project is never modified.
+- **`/naks`** finds waiting questions in your projects (through the Claude desktop app's folder access, or a GitHub repo), answers each one the way a plain API call would, and writes the answer files.
+- **`/naksify <project>`** connects an existing project, as described in [Option 3](#option-3-let-claude-do-it-naksify).
 
-The skills work in the Claude apps when they can reach your files (for example through the desktop app). Any client that can read and write the `.naks/` folders can answer requests, because the protocol is just JSON files.
+The protocol is plain JSON files, so anything that can read and write `.naks/` can answer questions.
 
-## Protocol
+## FAQ
 
-`.naks/requests/<id>.json`
+**Is this allowed?** NAKS is designed to stay on the conservative side. See [Responsible use](#responsible-use) below. In short: personal development only, no credential copying, official Claude apps only.
+
+**Will answers match what the API would return?** Not byte-for-byte, and API settings like `temperature` don't apply. They're great for building and testing. For final prompt tuning, use `record` or `api` mode.
+
+**Should I commit the `.naks/` folder?** Answers in `.naks/responses/` work well as test fixtures. Don't commit `.naks/requests/` if your prompts contain anything private. Always ignore `.naks/cli-usage.json` and `.naks/cli-log.jsonl`.
+
+**Can I answer from GitHub instead of my computer?** Yes. Push `.naks/requests/`, say `/naks github your-repo`, and Claude commits the answers. Then `git pull`.
+
+**Does it work with my ChatGPT subscription?** Not today. NAKS answers with Claude.
+
+## Responsible use
+
+- **No credential reuse.** NAKS never extracts, copies or proxies OAuth tokens or web sessions, and never automates a chat website. Answers come from you working in an official Claude app (`chat` mode) or from the official Claude Code CLI on your own machine (`cli` mode).
+- **Personal development only.** Don't put it in front of end users, share one subscription between people, or run it as a service. Production traffic should use `NAKS_MODE=api` with your own API key.
+- **Be measured with `cli` mode.** As of November 2026, Anthropic's help center says `claude -p` usage on a Claude plan draws from your plan's usage limits ([source](https://support.claude.com/en/articles/15036540)). Anthropic's rules on programmatic use of subscriptions changed several times in 2026, so check the current [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) yourself. Keep the daily cap low, and don't use `cli` mode for scheduled or unattended jobs.
+
+You're responsible for how you use NAKS with your own accounts. NAKS is not affiliated with or endorsed by Anthropic or OpenAI.
+
+## Limitations
+
+- Chat mode isn't real-time: answers arrive when you run `/naks`.
+- `naks serve` supports one tool per request for structured output, not multi-step tool loops. Embeddings, audio and image generation aren't supported.
+- CLI mode needs Claude Code installed and logged in on the machine that runs your code.
+
+## How it works (protocol)
+
+Each question is a JSON file named by a hash of its content:
 
 ```json
+// .naks/requests/tags-3f2a9c1b7d4e.json
 {
   "naks": 1,
   "id": "tags-3f2a9c1b7d4e",
@@ -140,46 +191,29 @@ The skills work in the Claude apps when they can reach your files (for example t
 }
 ```
 
-`.naks/responses/<id>.json`
-
 ```json
+// .naks/responses/tags-3f2a9c1b7d4e.json
 { "naks": 1, "id": "tags-3f2a9c1b7d4e", "answered_at": "…", "answered_by": "claude-chat", "output": ["work", "meeting"] }
 ```
 
-- **Id:** `<task slug>-<first 12 hex chars of SHA-256>` over the canonical JSON of `system`, `prompt`, `inputs`, `output` and `files`. The Python and JS clients produce identical ids.
-- **`output.format`:** `text`, `markdown` or `json`. When a schema is given, the default is `json`.
-- **`answered_by`:** `claude-chat` (`/naks`), `claude-cli` (`cli` mode) or `api:<model>` (`record` mode).
-- **Errors:** if a request can't be answered, the response file contains `"error": "…"` instead of `output`.
-- **Endpoint requests:** requests that come through `naks serve` get `serve-anthropic-…` / `serve-openai-…` ids. Send an `X-NAKS-Task` header to name them yourself. Base64 attachments are stored under `.naks/files/`.
-
-## Terms of service and responsible use
-
-NAKS is built to stay on the conservative side of how consumer AI plans may be used:
-
-- **No credential reuse.** NAKS never extracts, copies or proxies OAuth tokens or web sessions, and never automates a chat web UI. Answers come either from you working in an official Claude app (`chat` mode) or from the official Claude Code CLI on your own machine (`cli` mode).
-- **Personal development only.** Use it for your own development work. Don't put it in front of end users, share one subscription across people, or run it as a service. Production traffic should use `NAKS_MODE=api` with your own API key.
-- **Be measured with `cli` mode.** As of November 2026, Anthropic's help center says `claude -p` usage on a Claude plan draws from your plan's usage limits ([source](https://support.claude.com/en/articles/15036540)). Anthropic's policies on programmatic and third-party use of subscriptions changed several times in 2026, so check the current [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) and usage policies yourself. Keep the daily cap low, and don't wire `cli` mode into scheduled or unattended jobs.
-
-You are responsible for how you use NAKS with your own accounts. This project is not affiliated with or endorsed by Anthropic or OpenAI.
-
-## Limitations
-
-- An answer from a chat or from `claude -p` is not byte-for-byte what the raw API would return, and parameters like `temperature` don't apply. It's great for intermediate output, test data, classification and drafts. Do your final prompt tuning with `record` or `api`.
-- `chat` mode isn't real-time: answers arrive when you run `/naks`.
-- `naks serve` handles one structured-output tool per request, not real multi-tool agent loops. Embeddings, audio and image generation are not supported (those paths return 404).
-- `cli` mode needs Claude Code installed and logged in on the machine running your code.
+- **Id:** `<task>-<first 12 hex chars of SHA-256>` of `system`, `prompt`, `inputs`, `output` and `files`. The Python and JS clients produce the same ids, so they share answers.
+- **`output.format`:** `text`, `markdown` or `json`. It defaults to `json` when a schema is given.
+- **`answered_by`:** `claude-chat`, `claude-cli` or `api:<model>`.
+- **Errors:** an unanswerable question gets `"error": "…"` instead of `output`.
+- **Server requests:** questions that came through `naks serve` have `serve-anthropic-…` / `serve-openai-…` ids. Send an `X-NAKS-Task` header to name them. Images sent as base64 are stored under `.naks/files/`.
 
 ## Project layout
 
 ```
-bin/naks-dev            run any command with SDK calls routed through NAKS
-python/naks_client.py   Python client (ask, submit, get, pending)
-python/naks_serve.py    local Anthropic/OpenAI-compatible endpoint
+bin/naks-dev            run any command with its SDK calls routed through NAKS
+python/naks_client.py   Python client: ask, submit, get, pending
+python/naks_serve.py    local Anthropic/OpenAI-compatible server
 js/naks-client.mjs      JavaScript client (+ naks-client.d.mts types)
-skill/                  Claude skill templates (/naks, /naksify)
-examples/demo.py        minimal example
+skill/                  Claude skills: /naks and /naksify
+examples/demo.py        two-question demo
+INSTALL.md              step-by-step setup
 ```
 
 ## License
 
-MIT
+[MIT](LICENSE)

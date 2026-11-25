@@ -1,175 +1,219 @@
 # NAKS — No API Key System
 
-[English README](README.md)
+**Yapay zekâ özelliklerini API token'ı için para ödemeden, Claude aboneliğinle geliştir.**
 
-Bu araç projelerde geliştirme yaparken yapay zekâ çağrıları için API token'ı harcamanı engeller. Kod API'yi çağırmaz. Onun yerine soruyu NAKS'a sorar ve NAKS cevabı aboneliğinden getirir. Cevabı getirmenin iki yolu var:
+[English](README.md) · [Kurulum rehberi](INSTALL.tr.md)
 
-- **Sohbet (`chat`):** İstek bir dosyaya yazılır. Claude sohbetinde `/naks` dediğinde Claude bekleyen istekleri cevaplar.
-- **Claude Code (`cli`):** İstek anında `claude -p` ile cevaplanır. Bu yol günlük bir sınırla korunur.
+## Sorun
 
-Her cevap kaydedilir ve aynı soru bir daha sorulmaz. API anahtarı gerekmez. Production'a geçerken tek bir ortam değişkenini değiştirirsin.
+Bir LLM çağıran bir şey geliştirirken çağrıların çoğu deneme amaçlıdır. Prompt'u değiştirip tekrar çalıştırırsın, bir hatayı düzeltip tekrar çalıştırırsın, arayüzü kontrol etmek için bir kez daha çalıştırırsın. Bunların her biri API token'ı harcar, oysa muhtemelen her gün kullandığın bir Claude aboneliğin zaten var.
+
+## NAKS ne yapar?
+
+NAKS **geliştirme sırasında** kodun ile model API'si arasına girer:
+
+1. Kodun bir soru sorar: ya normal Anthropic/OpenAI SDK'sı üzerinden ya da NAKS'ın küçük `ask()` fonksiyonuyla.
+2. NAKS aynı soruyu daha önce cevapladıysa cevap doğrudan diskteki bir dosyadan gelir. Hiçbir model çağrılmaz.
+3. Cevaplamadıysa soru **Claude aboneliğinden** cevaplanır. Bunun için iki yoldan birini seçersin:
+   - **Sohbet modu (varsayılan):** soru bir dosyaya kaydedilir. Hazır olduğunda bir Claude sohbetinde `/naks` yazarsın, Claude bekleyen bütün soruları tek seferde cevaplar ve cevapları geri yazar.
+   - **CLI modu:** soru senin makinende Claude Code (`claude -p`) ile anında cevaplanır. Belirlediğin günlük bir sınır vardır.
+4. Her cevap kaydedilir, kodu tekrar çalıştırmak hiçbir şeye mal olmaz.
+
+Production'da tek bir ayarı değiştirirsin (`NAKS_MODE=api`) ve aynı kod gerçek API'yi kendi API anahtarınla, her zamanki gibi çağırır.
 
 ```
-kodun ──ask()──▶ .naks/requests/<id>.json        (bekliyor)
-                          │
-              sohbette /naks  ──▶  Claude cevaplar
-                          │
-kodun ◀──ask()── .naks/responses/<id>.json       (önbellek: aynı istek bir daha sorulmaz)
+kodun ──ask() / SDK──▶ NAKS ──▶ daha önce cevaplandı mı? ── evet ──▶ diskten cevap
+                                     │ hayır
+                    ┌────────────────┼──────────────────┬───────────────┐
+                    ▼                ▼                  ▼               ▼
+                  chat              cli              record           api
+           kuyruğa al; sohbette  `claude -p`,     gerçek API bir    gerçek API,
+           /naks ile cevapla     anında            kez, sonra kayıt  önbellek yok
+                                 (günlük sınır)                     (production)
+                    └────────────────┴──────────────────┘
+                                     ▼
+                         .naks/responses/<id>.json
 ```
 
-## Kurulum
+**Uygun olduğu yerler:** prototipler, prompt denemeleri, test verisi ve fixture üretmek, sık tekrar çalıştırdığın betikler ve iş akışları, yan projeler.
+**Uygun olmadığı yerler:** production trafiği, başka kullanıcılara hizmet vermek, gerçek zamanlı sohbet arayüzleri (sohbet modunda cevaplar `/naks` dediğinde gelir) ve döngü içinde tool çağıran çok adımlı ajanlar.
 
-Projeyi NAKS'a bağlamanın iki yolu var.
+> **"OpenAI uyumlu" ne demek?** NAKS, OpenAI SDK'sıyla yazılmış projeler değişiklik yapmadan çalışsın diye istekleri OpenAI'ın API formatında da kabul eder. Bu istekleri de yine **Claude** cevaplar, GPT modelleri değil.
 
-**1. Kodu hiç değiştirmeden (`naks-dev`).** Proje resmi Anthropic ya da OpenAI SDK'sını kullanıyorsa komutunun başına `naks-dev` eklemen yeterli:
+## Neler gerekli?
+
+| | Ne için |
+|---|---|
+| Bir Claude planı (Pro, Max, …) | Her şey: cevaplar aboneliğinden gelir |
+| Python 3.9+ | Her şey (NAKS'ın başka bir bağımlılığı yok) |
+| Projeler klasörü eklenmiş [Claude masaüstü uygulaması](https://claude.ai/download) ve `/naks` skill'i | Sohbet modu: Claude bekleyen soruları diskten okur |
+| Claude hesabınla giriş yapılmış [Claude Code](https://code.claude.com/docs/en/setup) | CLI modu |
+| Node 18+ | Sadece JavaScript istemcisini kullanacaksan |
+| Bir API anahtarı | Sadece `record` ve `api` modları için |
+
+[Kurulum rehberi](INSTALL.tr.md) bunların hepsini adım adım anlatıyor.
+
+## Hızlı başlangıç
 
 ```bash
-git clone https://github.com/genceumut/naks ~/naks
-export PATH="$HOME/naks/bin:$PATH"   # shell profiline ekle
-
-cd projen
-naks-dev npm run dev
-NAKS_MODE=cli naks-dev python3 generate.py
+git clone https://github.com/genceumut/naks ~/Projects/naks
+export PATH="$HOME/Projects/naks/bin:$PATH"   # isteğe bağlı: `naks-dev`'i her yerden yazabilmek için
+python3 ~/Projects/naks/examples/demo.py       # "2 request(s) queued" yazar
 ```
 
-`naks-dev` yerel bir endpoint (`naks serve`) başlatır. SDK'ları `ANTHROPIC_BASE_URL` ve `OPENAI_BASE_URL` değişkenleriyle o endpoint'e yönlendirir. Komut bitince endpoint'i kapatır. Proje gerçek bir API'yle konuştuğunu sanır. Endpoint'i ayrıca kendin de çalıştırabilirsin: `python3 ~/naks/python/naks_serve.py`, sonra SDK'da `base_url = "http://127.0.0.1:4141"` (OpenAI için `/v1` ekle) ve `api_key = "naks"`.
+Sonra bir Claude sohbetinde `/naks naks` yaz, demoyu tekrar çalıştır, cevaplar görünür. Bunun için `/naks` skill'i ve projeler klasörü eklenmiş Claude masaüstü uygulaması gerekiyor. İkisi de [kurulum rehberinde](INSTALL.tr.md) anlatılıyor. Sohbet yerine Claude Code ile de cevaplatabilirsin: `NAKS_MODE=cli python3 -c "import sys; sys.path.insert(0, '$HOME/Projects/naks/python'); from naks_client import ask; print(ask('Say hello in 3 words'))"`.
 
-Endpoint şunları destekler: `/v1/messages`, `/v1/chat/completions`, streaming, base64 görseller, JSON şeması ve tek bir tool ile yapılandırılmış çıktı. Birden fazla tool ile gerçek tool döngüleri, embedding ve ses desteklenmez. `chat` modunda istek açık kalır (en fazla `NAKS_SERVE_WAIT` = 540 saniye). Sen `/naks` deyince cevap aynı isteğe döner. Süre dolarsa 424 hatası döner. SDK'lar bu hatayı otomatik tekrar denemez.
+## Bir projeyi bağlamak
 
-**2. Kodda `ask()` ile.** SDK kullanmayan ya da yeni yazdığın projelerde tek dosyayı projene kopyala. Başka bağımlılık yok:
+### Yol 1: kod değişikliği olmadan (`naks-dev`)
 
-- Python: `python/naks_client.py`
-- JS/TS (Node 18+): `js/naks-client.mjs` (tipler: `js/naks-client.d.mts`)
+Projen resmi **Anthropic** ya da **OpenAI** SDK'sını kullanıyorsa, zaten kullandığın komutun başına `naks-dev` ekle:
 
-## Kullanım
+```bash
+cd projen
+naks-dev npm run dev                         # sohbet modu: /naks ile cevapla
+NAKS_MODE=cli naks-dev python3 generate.py   # cli modu: claude -p anında cevaplar
+```
+
+`naks-dev`, Anthropic ve OpenAI API'lerini konuşan küçük bir yerel sunucu başlatır (`naks serve`, port 4141). SDK'nı `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` ile ve sahte bir API anahtarıyla bu sunucuya yönlendirir. Komutun bitince sunucuyu kapatır. Kodun aradaki farkı anlamaz.
+
+Sunucu normal istekleri, streaming'i, görselleri ve PDF'leri, JSON şemalı çıktıyı ve tek bir tool ile yapılandırılmış çıktıyı destekler.
+
+### Yol 2: koddan çağırmak (`ask()`)
+
+Yeni kod yazıyorsan ya da proje resmi bir SDK kullanmıyorsa tek bir dosyayı projene kopyala. Bağımlılığı yok.
 
 ```python
-from naks_client import ask, NaksPending
+from naks_client import ask   # python/naks_client.py
 
-try:
-    title = ask("Bu not için 5 kelimelik başlık öner:\n" + note, task="note-title")
-    tags = ask("Bu nottan etiket çıkar.", inputs={"note": note},
-               schema={"type": "array", "items": {"type": "string"}}, task="tags")
-except NaksPending as e:
-    print(e)   # "2 istek cevap bekliyor… Claude sohbetinde /naks de"
+title = ask("Suggest a 5-word title for this note:\n" + note, task="note-title")
+tags = ask("Extract 2-4 tags.", inputs={"note": note},
+           schema={"type": "array", "items": {"type": "string"}}, task="tags")
+summary = ask("Summarize this slide in one sentence.", files=["slides/p3.png"], task="slide-summary")
 ```
 
 ```js
-import { ask } from "./naks-client.mjs";
-const tags = await ask("Bu nottan etiket çıkar.", { inputs: { note }, schema: { type: "array", items: { type: "string" } }, task: "tags" });
+import { ask } from "./naks-client.mjs";   // js/naks-client.mjs (+ naks-client.d.mts tipleri)
+const tags = await ask("Extract 2-4 tags.", { inputs: { note }, schema: { type: "array", items: { type: "string" } }, task: "tags" });
 ```
 
-Tipik döngü şöyle işler:
-1. Kodu çalıştırırsın. Cevabı olmayan istekler yazılır ve `NaksPending` hatası gelir.
-2. Claude sohbetinde `/naks` dersin. İstersen proje adını da eklersin: `/naks yarun`.
-3. Kodu tekrar çalıştırırsın. Cevaplar artık diskten gelir.
+Sohbet modunda cevabı olmayan bir `ask()`, `/naks` çalıştırmanı söyleyen bir `NaksPending` hatası fırlatır. Kodu çalıştırırsın, `/naks` dersin, tekrar çalıştırırsın. Prompt'u, sistem mesajını, girdileri, şemayı ya da ekli bir dosyayı değiştirirsen yeni bir soru oluşur. Değişmeyen hiçbir şey iki kez sorulmaz.
 
-Prompt'u, sistem mesajını, girdileri ya da şemayı değiştirirsen istek id'si de değişir. Yeni istek yeniden sorulur. Hiçbir şey değişmezse istek bir daha sorulmaz.
+### Yol 3: Claude'a yaptırmak (`/naksify`)
 
-Görsel ya da PDF göndermek için `files` kullan (png, jpg, gif, webp, pdf). Dosyanın içeriği değişirse istek de yeni sayılır:
-
-```python
-desc = ask("Bu slaytı tek cümleyle özetle.", files=["pages/p3.png"], task="slide-summary")
-```
-
-Toplu iş için önce hepsini yaz, sonra oku:
-
-```python
-from naks_client import submit, get, pending
-ids = [submit(f"Şu yorumu sınıflandır: {r}", schema=SCHEMA, task="review-class") for r in reviews]
-# /naks
-results = [get(i) for i in ids]
-```
+`/naksify` skill'i kuruluysa Claude'da `/naksify projem` yaz. Skill önce Yol 1'in yetip yetmediğine bakar ve yetiyorsa sana komutu verir. Yetmiyorsa `naks-at-your-service/projem/` altında dönüştürülmüş bir kopya oluşturur. Orijinale dokunmaz.
 
 ## Modlar
 
-`NAKS_MODE` ortam değişkeniyle seçilir. `api` dışındaki her mod önce önbelleğe bakar. Cevap kayıtlıysa hiçbir yere gidilmez.
+`NAKS_MODE` ortam değişkeniyle seçilir. `api` dışındaki her mod önce kayıtlı bir cevap arar.
 
-| Mod | Cevap yoksa ne olur | Ne zaman |
+| Mod | Kayıtlı cevap yoksa | Ne için |
 |---|---|---|
-| `chat` (varsayılan) | İstek dosyaya yazılır, `NaksPending` gelir. Sohbette `/naks` dersin | Toplu işler, görsel içeren istekler |
-| `cli` | `claude -p` ile anında cevaplanır (aboneliğinden) | Geliştirirken küçük, tek tek gelen sorular |
-| `record` | Gerçek API çağrılır, cevap kaydedilir | Gerçek modelin cevabını bir kez alıp saklamak için |
-| `replay` | `NaksMissing` hatası gelir, yeni soru sorulmaz | Testler ve CI |
-| `api` | Önbelleğe bakılmadan doğrudan gerçek API çağrılır | Production |
+| `chat` (varsayılan) | Soruyu kaydeder ve `/naks`'ı bekler | Toplu işler, görsel içeren sorular, kontrol etmek istediğin her şey |
+| `cli` | `claude -p` ile anında cevaplar | Çalışırken gelen küçük, tek tek sorular |
+| `record` | Gerçek API'yi bir kez çağırır ve cevabı kaydeder | Gerçek model çıktısını fixture olarak saklamak |
+| `replay` | `NaksMissing` hatası verir, yeni bir şey sormaz | Testler ve CI |
+| `api` | Önbelleğe bakmadan doğrudan gerçek API'yi çağırır | Production |
 
-**`cli` modunun güvenlik önlemleri.** `claude -p` her seferinde araçları kapalı, boş bir geçici klasörde ve oturum kaydetmeden çalışır, yani sadece metin üretir. Ortamdaki `ANTHROPIC_API_KEY` çağrı sırasında silinir, böylece yanlışlıkla API'ye fatura çıkmaz. Günde en fazla `NAKS_CLI_DAILY_LIMIT` (20) çağrı yapılır, sayaç `.naks/cli-usage.json` dosyasında tutulur. Bütün çağrılar `.naks/cli-log.jsonl` dosyasına loglanır. Aşağıdaki durumlarda istek kendiliğinden `chat` yoluna düşer ve `/naks`'a kalır:
-- Günlük sınır dolmuşsa
-- İstekte görsel ya da PDF varsa
-- `claude` kurulu değilse
-- `claude -p` iki denemede de hata verirse ya da cevap şemaya uymazsa
+### `cli` modunun güvenlik önlemleri
 
-`cli` modunu kişisel geliştirme için kullan. Zamanlanmış görevlere ya da sürekli çalışan gözetimsiz işlere bağlama.
+- **Sadece metin.** `claude -p` bütün araçları kapalı, boş bir geçici klasörde, MCP sunucusu olmadan ve oturum kaydetmeden çalışır.
+- **API faturası yok.** `ANTHROPIC_API_KEY` ortamından silinir, böylece Claude Code planın yerine sessizce API hesabına fatura çıkaramaz.
+- **Günlük sınır.** Günde en fazla `NAKS_CLI_DAILY_LIMIT` çağrı yapılır (varsayılan 20). Her çağrı `.naks/cli-log.jsonl` dosyasına loglanır.
+- **Sohbet moduna geri düşme.** Sınır dolunca, soruda ek varsa, Claude Code kurulu değilse ya da bir çağrı iki kez başarısız olursa soru sohbet moduna kalır.
 
-| Ortam değişkeni | Varsayılan | Ne yapar |
+### Ayarlar
+
+| Değişken | Varsayılan | Ne yapar |
 |---|---|---|
-| `NAKS_WAIT` | `0` | `chat` modunda cevap yoksa kaç saniye dosya yoklansın |
-| `NAKS_DIR` | proje kökü/.naks | `.naks` klasörünün yeri (`.git` ya da `.naks` içeren ilk üst klasör) |
-| `NAKS_MODEL` | `claude-sonnet-5-5` | `api` ve `record` modlarında model |
-| `NAKS_CLI_DAILY_LIMIT` | `20` | `cli` modunda günlük en fazla `claude -p` çağrısı |
+| `NAKS_MODE` | `chat` | Yukarıya bak |
+| `NAKS_DIR` | proje kökündeki `.naks` (`.git` ya da `.naks` içeren en yakın klasör) | Soruların ve cevapların durduğu yer |
+| `NAKS_WAIT` | `0` | `ask()`'in sohbet modunda `NaksPending` fırlatmadan önce cevap bekleyeceği saniye |
+| `NAKS_MODEL` | `claude-sonnet-5-5` | `api` / `record` için model |
+| `NAKS_CLI_DAILY_LIMIT` | `20` | Günlük en fazla `claude -p` çağrısı |
 | `NAKS_CLI_TIMEOUT` | `180` | Tek bir `claude -p` çağrısı için saniye |
-| `NAKS_CLI_MODEL` | Claude Code'un varsayılanı | `cli` modunda model |
-| `NAKS_PORT` | `4141` | `naks serve` portu |
-| `NAKS_SERVE_WAIT` | `540` | `naks serve`'ün `chat` modunda bir cevabı bekleme süresi (saniye) |
+| `NAKS_CLI_MODEL` | Claude Code'un varsayılanı | `cli` için model |
+| `NAKS_PORT` | `4141` | `naks serve` / `naks-dev` portu |
+| `NAKS_SERVE_WAIT` | `540` | Sunucunun sohbet modunda bir isteği açık tutacağı saniye. Süre dolunca HTTP 424 döner, SDK'lar bunu otomatik tekrar denemez. |
 
-`.gitignore` önerisi: `.naks/cli-usage.json`, `.naks/cli-log.jsonl`, `.naks/*.tmp`.
+## Claude skill'leri
 
-## Mevcut projeyi NAKS'a çevirmek: `/naksify`
+[`skill/`](skill/) klasöründe iki skill var. Claude'a nasıl ekleneceklerini [kurulum rehberi](INSTALL.tr.md#4-claude-skilllerini-kur) anlatıyor.
 
-Proje resmi SDK kullanıyorsa önce `naks-dev` ile dene, çoğu zaman kopyaya gerek kalmaz. `/naksify <proje>` ise projenin bir kopyasını oluşturur. Bütün kopyalar tek bir klasörde toplanır: `~/Projects/naks-at-your-service/<proje>/`. Kopyadaki yapay zekâ çağrılarını `ask()` ile değiştirir, API anahtarı gerektiren kodu kaldırır ve kopyanın köküne ne yapıldığını anlatan bir `NAKS.md` yazar. Orijinal projeye dokunulmaz. Kopyadaki bekleyen istekler için `/naks <proje>` demen yeterli. `/naksify github <repo>` aynı işi repoda `naks` adlı bir branch açarak yapar.
+- **`/naks`**, projelerindeki bekleyen soruları bulur (Claude masaüstü uygulamasının klasör erişimiyle ya da bir GitHub reposundan). Her birini sade bir API çağrısı nasıl cevaplarsa öyle cevaplar ve cevap dosyalarını yazar.
+- **`/naksify <proje>`**, mevcut bir projeyi [Yol 3](#yol-3-claudea-yaptırmak-naksify)'te anlatıldığı gibi bağlar.
 
-## GitHub'daki projeler
+Protokol sade JSON dosyalarından oluşuyor. `.naks/` klasörünü okuyup yazabilen her şey soruları cevaplayabilir.
 
-Bir projenin `.naks/requests/` klasörünü commit'leyip push'larsan `/naks github <repo>` komutu repoyu okur, cevapları `.naks/responses/` altına yazar ve senin adınla commit'leyip push'lar. Sonra sen `git pull` yaparsın.
+## Sık sorulanlar
 
-## Skill'ler
+**Bu kullanım serbest mi?** NAKS temkinli tarafta kalacak şekilde tasarlandı. Aşağıdaki [Sorumlu kullanım](#sorumlu-kullanım) bölümüne bak. Kısaca: sadece kişisel geliştirme, kimlik bilgisi kopyalamak yok, sadece resmi Claude uygulamaları.
 
-`skill/naks/SKILL.md` (bekleyen istekleri cevaplar) ve `skill/naksify/SKILL.md` (projenin NAKS kopyasını çıkarır) dosyaları İngilizce şablonlardır. Klasör yolunu ve GitHub kullanıcı adını kendine göre düzenleyip Claude'a skill olarak ekleyebilirsin.
+**Cevaplar API'nin vereceğiyle aynı mı olur?** Birebir aynı olmaz ve `temperature` gibi API ayarları geçerli olmaz. Geliştirme ve test için çok uygundur. Son prompt ayarları için `record` ya da `api` modunu kullan.
 
-## Protokol
+**`.naks/` klasörünü commit'lemeli miyim?** `.naks/responses/` içindeki cevaplar test fixture'ı olarak işe yarar. Prompt'larında gizli bir şey varsa `.naks/requests/` klasörünü commit'leme. `.naks/cli-usage.json` ve `.naks/cli-log.jsonl` dosyalarını her zaman yoksay.
 
-`.naks/requests/<id>.json`:
+**Bilgisayarım yerine GitHub'dan cevaplayabilir miyim?** Evet. `.naks/requests/` klasörünü push'la, Claude'da `/naks github repon` de, Claude cevapları commit'ler. Sonra `git pull` yaparsın.
 
-```json
-{
-  "naks": 1,
-  "id": "tags-3f2a9c1b7d4e",
-  "project": "yarun",
-  "task": "tags",
-  "created_at": "2026-11-24T10:45:00+00:00",
-  "system": "İsteğe bağlı sistem mesajı",
-  "prompt": "Bu nottan etiket çıkar.",
-  "inputs": { "note": "..." },
-  "output": { "format": "json", "schema": { "type": "array", "items": { "type": "string" } } }
-}
-```
+**ChatGPT aboneliğimle çalışır mı?** Şimdilik hayır. NAKS cevapları Claude ile verir.
 
-Ek varsa istek bir de `"files": [{"path": "pages/p1.png", "sha256": "…"}]` alanı taşır. Yol proje köküne göredir.
+## Sorumlu kullanım
 
-`output.format` alanı `text`, `markdown` ya da `json` olabilir. Şema verilmişse varsayılan `json` olur. Id, `task` alanının ASCII hali ile `system`, `prompt`, `inputs` ve `output` alanlarının SHA-256 özetinin ilk 12 karakterinden oluşur. Python ve JS istemcileri aynı id'yi üretir.
+- **Kimlik bilgisi yeniden kullanılmaz.** NAKS hiçbir zaman OAuth token'ı ya da web oturumu kopyalamaz veya taşımaz. Bir sohbet sitesini de otomatikleştirmez. Cevaplar iki yoldan gelir: senin resmi bir Claude uygulamasında çalışman (`chat` modu) ya da kendi makinendeki resmi Claude Code CLI (`cli` modu).
+- **Sadece kişisel geliştirme için.** Son kullanıcılara açma, bir aboneliği birden fazla kişiyle paylaşma ve NAKS'ı bir servis olarak çalıştırma. Production trafiği kendi API anahtarınla `NAKS_MODE=api` kullanmalı.
+- **`cli` modunu ölçülü kullan.** Anthropic'in yardım merkezine göre Kasım 2026 itibarıyla Claude planındaki `claude -p` kullanımı planın kullanım limitlerinden düşüyor ([kaynak](https://support.claude.com/en/articles/15036540)). Aboneliklerin programatik kullanımına dair kurallar 2026'da birkaç kez değişti. Güncel [Tüketici Şartları](https://www.anthropic.com/legal/consumer-terms)'nı kendin kontrol et. Günlük sınırı düşük tut ve `cli` modunu zamanlanmış ya da gözetimsiz işler için kullanma.
 
-`.naks/responses/<id>.json`:
-
-```json
-{ "naks": 1, "id": "tags-3f2a9c1b7d4e", "answered_at": "…", "answered_by": "claude-chat", "output": ["iş", "toplantı"] }
-```
-
-`answered_by` alanı cevabın nereden geldiğini gösterir: `claude-chat` (`/naks`), `claude-cli` (`cli` modu) ya da `api:<model>` (`record` modu). `naks serve` üzerinden gelen istekler `serve-anthropic-…` ve `serve-openai-…` id'leri alır. İsteğe görev adı vermek istersen `X-NAKS-Task` başlığını gönder. Base64 görseller `.naks/files/` altına kaydedilir.
-
-İstek cevaplanamazsa `output` yerine `"error": "neden"` yazılır.
-
-## Kullanım şartları ve sorumlu kullanım
-
-NAKS, tüketici aboneliklerinin kullanım kurallarında temkinli tarafta kalacak şekilde tasarlandı:
-- **Kimlik bilgisi yeniden kullanılmaz.** NAKS hiçbir zaman OAuth token'ı ya da web oturumu kopyalamaz veya taşımaz. Bir sohbet arayüzünü de otomatikleştirmez. Cevaplar iki yoldan gelir: senin resmi bir Claude uygulamasında çalışman (`chat`) ya da kendi makinendeki resmi Claude Code CLI (`cli`).
-- **Sadece kişisel geliştirme için.** Son kullanıcı trafiğini NAKS'tan geçirme, bir aboneliği birden fazla kişiyle paylaşma ve NAKS'ı bir servis olarak çalıştırma. Production'da kendi API anahtarınla `NAKS_MODE=api` kullan.
-- **`cli` modunu ölçülü kullan.** Anthropic'in yardım merkezi, Kasım 2026 itibarıyla `claude -p` kullanımının abonelik limitlerinden düştüğünü söylüyor ([kaynak](https://support.claude.com/en/articles/15036540)). Bu konudaki kurallar 2026'da birkaç kez değişti. Güncel [kullanım şartlarını](https://www.anthropic.com/legal/consumer-terms) kendin kontrol et ve `cli` modunu zamanlanmış ya da gözetimsiz işlere bağlama.
-
-NAKS'ı kendi hesaplarınla nasıl kullandığından sen sorumlusun. Bu proje Anthropic ya da OpenAI ile bağlantılı değildir.
+NAKS'ı kendi hesaplarınla nasıl kullandığından sen sorumlusun. NAKS, Anthropic ya da OpenAI ile bağlantılı değildir ve onlar tarafından desteklenmemektedir.
 
 ## Sınırlar
 
-- Sohbetteki Claude ham API çağrısıyla birebir aynı çıktıyı vermez. Ara çıktılar, test verisi, sınıflandırma ve taslak işleri için yeterlidir. Production prompt'unu ince ayarlarken son denemeleri `NAKS_MODE=api` ile yap.
-- `chat` modu gerçek zamanlı değildir. Cevap ancak sen `/naks` dediğinde gelir. Anında cevap için `cli` modunu kullan.
-- `cli` modu ham API ile aynı değildir: `temperature` gibi parametreler yoktur ve her çağrıda birkaç saniye ek gecikme olur. Anthropic'in abonelik kuralları 2026'da birkaç kez değişti. Bu modu ölçülü kullan.
-- Kişisel geliştirme aracıdır. Son kullanıcı trafiği hiçbir zaman bu yoldan geçmemeli.
+- Sohbet modu gerçek zamanlı değildir: cevaplar `/naks` çalıştırdığında gelir.
+- `naks serve` yapılandırılmış çıktı için istek başına tek bir tool destekler, çok adımlı tool döngülerini desteklemez. Embedding, ses ve görsel üretme desteklenmez.
+- CLI modu, kodunu çalıştıran makinede Claude Code'un kurulu ve giriş yapılmış olmasını gerektirir.
+
+## Nasıl çalışır (protokol)
+
+Her soru, içeriğinin özetiyle (hash) adlandırılmış bir JSON dosyasıdır:
+
+```json
+// .naks/requests/tags-3f2a9c1b7d4e.json
+{
+  "naks": 1,
+  "id": "tags-3f2a9c1b7d4e",
+  "project": "my-app",
+  "task": "tags",
+  "created_at": "2026-11-24T10:45:00+00:00",
+  "system": "Optional system prompt",
+  "prompt": "Extract 2-4 tags.",
+  "inputs": { "note": "..." },
+  "output": { "format": "json", "schema": { "type": "array", "items": { "type": "string" } } },
+  "files": [{ "path": "slides/p3.png", "sha256": "…" }]
+}
+```
+
+```json
+// .naks/responses/tags-3f2a9c1b7d4e.json
+{ "naks": 1, "id": "tags-3f2a9c1b7d4e", "answered_at": "…", "answered_by": "claude-chat", "output": ["work", "meeting"] }
+```
+
+- **Id:** `<task>-<SHA-256'nın ilk 12 hex karakteri>`. Özet `system`, `prompt`, `inputs`, `output` ve `files` alanlarından hesaplanır. Python ve JS istemcileri aynı id'yi üretir, yani cevapları paylaşırlar.
+- **`output.format`:** `text`, `markdown` ya da `json`. Şema verilmişse varsayılan `json`'dur.
+- **`answered_by`:** `claude-chat`, `claude-cli` ya da `api:<model>`.
+- **Hatalar:** cevaplanamayan bir soruda `output` yerine `"error": "…"` yazılır.
+- **Sunucu istekleri:** `naks serve` üzerinden gelen soruların id'leri `serve-anthropic-…` / `serve-openai-…` şeklindedir. İsim vermek için `X-NAKS-Task` başlığını gönder. Base64 olarak gönderilen görseller `.naks/files/` altına kaydedilir.
+
+## Proje yapısı
+
+```
+bin/naks-dev            herhangi bir komutu SDK çağrıları NAKS'tan geçecek şekilde çalıştırır
+python/naks_client.py   Python istemcisi: ask, submit, get, pending
+python/naks_serve.py    yerel Anthropic/OpenAI uyumlu sunucu
+js/naks-client.mjs      JavaScript istemcisi (+ naks-client.d.mts tipleri)
+skill/                  Claude skill'leri: /naks ve /naksify
+examples/demo.py        iki soruluk demo
+INSTALL.md              adım adım kurulum
+```
+
+## Lisans
+
+[MIT](LICENSE)
